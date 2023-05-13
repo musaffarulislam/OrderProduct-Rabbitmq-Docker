@@ -1,0 +1,34 @@
+version: '3'
+services:
+  product-db:
+    image: mongo
+    ports:
+      - 27017:27017
+  order-db:
+    image: mongo
+    ports:
+      - 27018:27017
+  rabbitmq:
+    image: rabbitmq
+    ports:
+      - 5672:5672
+      - 15672:15672
+  order-service:
+    build: ./order-service
+    ports:
+      - 3002:3002
+    environment:
+      - NODE_OPTIONS=--trace-warnings
+    depends_on:
+      - order-db
+      - rabbitmq
+  product-service:
+    build: ./product-service
+    ports:
+      - 3001:3001
+    environment:
+      - NODE_OPTIONS=--trace-warnings
+    depends_on:
+      - order-service
+      - product-db
+      - rabbitmq
