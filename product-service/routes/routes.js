@@ -8,10 +8,29 @@ let order, channel, connection;
 // Connect to RabbitMQ
 async function connectToRabbitMQ() {
   const amqpServer = "amqp://guest:guest@rabbitmq:5672";
-  connection = await amqp.connect(amqpServer);
-  channel = await connection.createChannel();
-  await channel.assertQueue("product-service-queue");
+  const maxRetries = 5;
+  let retryCount = 0;
+  
+  while (retryCount < maxRetries) {
+    try {
+      connection = await amqp.connect(amqpServer);
+      channel = await connection.createChannel();
+      await channel.assertQueue("product-service-queue");
+      await channel.assertQueue("product-order-queue");
+      break; // Connection successful, exit the loop
+    } catch (error) {
+      console.error("Failed to connect to RabbitMQ. Retrying...");
+      retryCount++;
+      await new Promise((resolve) => setTimeout(resolve, 2000)); // Wait for 2 seconds before retrying
+    }
+  }
+  
+  if (retryCount === maxRetries) {
+    console.error("Failed to connect to RabbitMQ after maximum retries.");
+    // Handle the failure scenario accordingly
+  }
 }
+
 connectToRabbitMQ();
 
 // Create a new product
@@ -34,7 +53,9 @@ router.post("/", async (req, res) => {
 router.post("/buy", async (req, res) => {
   const { productIds } = req.body;
   const products = await Product.find({ _id: { $in: productIds } });
-  // 645f852f4e40f3950f439dbe
+  if (!connection || !channel) {
+    await connectToRabbitMQ();
+  }
   // Send order to RabbitMQ order queue
   channel.sendToQueue(
     "order-service-queue",
@@ -49,14 +70,41 @@ router.post("/buy", async (req, res) => {
   channel.consume("product-service-queue", (data) => {
     console.log("Consumed from product-service-queue");
     order = JSON.parse(data.content);
+    console.log("Order: ",order);
     channel.ack(data);
   });
 
   // Return a success message
   return res.status(201).json({
     message: "Order placed successfully",
-    order,
+    order: order,
   });
 });
+
+
+router.get("/productOrders", async (req, res)=>{
+  const {productId } = req.body;
+  if (!connection || !channel) {
+    await connectToRabbitMQ();
+  }
+  channel.sendToQueue(
+    'order-product-queue',
+    Buffer.from(
+      JSON.stringify({
+        productId
+      })
+    )
+  );
+  channel.consume("product-order-queue", (data) =>{
+    console.log("Consumed from product-order-queue");
+    order = JSON.parse(data.content);
+    channel.ack(data);
+  })
+
+  return res.status(201).json({
+    message: "Order return successfully",
+    order
+  })
+})
 
 module.exports = router;
